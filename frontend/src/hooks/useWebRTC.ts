@@ -1,21 +1,36 @@
-import { useEffect, useRef, useCallback } from "react";
+﻿import { useEffect, useRef, useCallback } from "react";
 import { useCallStore } from "@/stores/useCallStore";
 import { useSocketStore } from "@/stores/useSocketStore";
 
 const ICE_SERVERS: RTCConfiguration = {
   iceServers: [
+    { urls: "stun:stun.cloudflare.com:3478" },
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
-    { urls: "stun:stun2.l.google.com:19302" },
     {
-      urls: "turn:freeturn.net:3478",
-      username: "free",
-      credential: "free",
+      urls: "turn:turn.cloudflare.com:3478",
+      username: "g123456",
+      credential: "cloudflare",
     },
     {
-      urls: "turns:freeturn.net:5349",
-      username: "free",
-      credential: "free",
+      urls: "turns:turn.cloudflare.com:5349",
+      username: "g123456",
+      credential: "cloudflare",
+    },
+    {
+      urls: "turn:relay.metered.ca:80",
+      username: "e8dd65f332c9b7254673d4ea",
+      credential: "uMDa5g7JpON/VQHX",
+    },
+    {
+      urls: "turn:relay.metered.ca:443",
+      username: "e8dd65f332c9b7254673d4ea",
+      credential: "uMDa5g7JpON/VQHX",
+    },
+    {
+      urls: "turns:relay.metered.ca:443?transport=tcp",
+      username: "e8dd65f332c9b7254673d4ea",
+      credential: "uMDa5g7JpON/VQHX",
     },
   ],
 };
@@ -38,9 +53,7 @@ export function useWebRTC() {
 
   const createPeerConnection = useCallback(
     (targetUserId: string, callId: string, stream: MediaStream) => {
-      if (pcRef.current) {
-        pcRef.current.close();
-      }
+      if (pcRef.current) pcRef.current.close();
       pendingCandidates.current = [];
 
       const pc = new RTCPeerConnection(ICE_SERVERS);
@@ -49,17 +62,11 @@ export function useWebRTC() {
 
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
-      pc.ontrack = (event) => {
-        setRemoteStream(event.streams[0]);
-      };
+      pc.ontrack = (event) => setRemoteStream(event.streams[0]);
 
       pc.onicecandidate = (event) => {
         if (event.candidate && socket) {
-          socket.emit("webrtc:ice", {
-            callId,
-            targetUserId,
-            candidate: event.candidate,
-          });
+          socket.emit("webrtc:ice", { callId, targetUserId, candidate: event.candidate });
         }
       };
 
@@ -86,25 +93,12 @@ export function useWebRTC() {
   useEffect(() => {
     if (!socket) return;
 
-    const handleOffer = async ({
-      fromUserId,
-      callId,
-      offer,
-    }: {
-      fromUserId: string;
-      callId: string;
-      offer: RTCSessionDescriptionInit;
-    }) => {
+    const handleOffer = async ({ fromUserId, callId, offer }: { fromUserId: string; callId: string; offer: RTCSessionDescriptionInit }) => {
       const stream = await getLocalStream();
       const pc = createPeerConnection(fromUserId, callId, stream);
       await pc.setRemoteDescription(new RTCSessionDescription(offer));
-
-      // Xử lý pending candidates
-      for (const candidate of pendingCandidates.current) {
-        await pc.addIceCandidate(new RTCIceCandidate(candidate));
-      }
+      for (const c of pendingCandidates.current) await pc.addIceCandidate(new RTCIceCandidate(c));
       pendingCandidates.current = [];
-
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       socket.emit("webrtc:answer", { callId, targetUserId: fromUserId, answer });
@@ -114,18 +108,13 @@ export function useWebRTC() {
       const pc = pcRef.current;
       if (!pc || pc.signalingState === "closed") return;
       await pc.setRemoteDescription(new RTCSessionDescription(answer));
-
-      // Xử lý pending candidates
-      for (const candidate of pendingCandidates.current) {
-        await pc.addIceCandidate(new RTCIceCandidate(candidate));
-      }
+      for (const c of pendingCandidates.current) await pc.addIceCandidate(new RTCIceCandidate(c));
       pendingCandidates.current = [];
     };
 
     const handleIce = async ({ candidate }: { candidate: RTCIceCandidateInit }) => {
       const pc = pcRef.current;
       if (!pc || pc.signalingState === "closed") return;
-
       if (pc.remoteDescription) {
         await pc.addIceCandidate(new RTCIceCandidate(candidate));
       } else {
